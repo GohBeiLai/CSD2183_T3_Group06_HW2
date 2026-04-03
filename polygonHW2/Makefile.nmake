@@ -1,0 +1,27 @@
+# Makefile for Area-and-Topology-Preserving Polygon Simplification
+# Works with Microsoft NMAKE (part of Visual Studio)
+
+CXX = cl.exe
+CXXFLAGS = /nologo /std:c++17 /EHsc /W4 /O2 /MD
+
+SRCDIR = src
+TARGET = simplify.exe
+
+SOURCES = $(SRCDIR)\main.cpp
+HEADERS = $(SRCDIR)\apsc.hpp \
+          $(SRCDIR)\geometry.hpp \
+          $(SRCDIR)\node.hpp \
+          $(SRCDIR)\polygon.hpp \
+          $(SRCDIR)\priority_queue.hpp \
+          $(SRCDIR)\ring.hpp \
+          $(SRCDIR)\spatial_grid.hpp
+
+all: $(TARGET)
+
+$(TARGET): $(SOURCES) $(HEADERS)
+	$(CXX) $(CXXFLAGS) /Fe:$(TARGET) $(SOURCES)
+
+clean:
+	-del /f $(TARGET)
+	-del /f *.obj
+	-del /f bin\*.obj

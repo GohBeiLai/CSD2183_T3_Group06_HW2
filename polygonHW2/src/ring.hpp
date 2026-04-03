@@ -9,13 +9,18 @@
 class Ring {
 public:
     Ring(int ring_id, NodePool& pool) : ring_id_(ring_id), head_(nullptr), 
-                                         vertex_count_(0), pool_(pool) {}
+                                         vertex_count_(0), next_generated_id_(0), pool_(pool) {}
     
     ~Ring() = default;  // Pool manages node memory
     
     // Add vertex to ring (builds the linked list)
-    void addVertex(double x, double y) {
-        Node* node = pool_.allocate(x, y, ring_id_);
+    void addVertex(double x, double y, int orig_id = -1) {
+        Node* node = pool_.allocate(x, y, ring_id_, orig_id);
+        
+        // Track the max original_id for generating new IDs
+        if (orig_id >= next_generated_id_) {
+            next_generated_id_ = orig_id + 1;
+        }
         
         if (!head_) {
             head_ = node;
@@ -41,6 +46,9 @@ public:
     // Get ring ID
     int ringId() const { return ring_id_; }
     
+    // Get the next generated ID (for assigning to new/repurposed vertices)
+    int nextGeneratedId() { return next_generated_id_++; }
+    
     // Remove a node from the ring (does not deallocate)
     void removeNode(Node* node) {
         if (!node || vertex_count_ == 0) return;
@@ -60,7 +68,7 @@ public:
     
     // Insert a new node after the given node
     Node* insertAfter(Node* after, double x, double y) {
-        Node* newNode = pool_.allocate(x, y, ring_id_);
+        Node* newNode = pool_.allocate(x, y, ring_id_, next_generated_id_++);
         
         newNode->next = after->next;
         newNode->prev = after;
@@ -129,6 +137,7 @@ private:
     int ring_id_;
     Node* head_;
     int vertex_count_;
+    int next_generated_id_;  // For assigning IDs to new/repurposed vertices
     NodePool& pool_;
 };
 

@@ -71,17 +71,16 @@ public:
                 continue;
             }
             
-            // Topology check: verify collapse won't cause intersections
-            // The spatial grid checks against all edges in all rings
-            if (grid_.collapseWouldIntersect(best.a, best.b, best.c, best.d, best.newE)) {
+            // Topology check: O(n) scan matching Project 2's exact logic
+            if (collapseCausesIntersection(ring, best.a, best.b, best.c, best.d, best.newE)) {
                 continue;
             }
             
             // Apply the collapse
             applyCollapse(ring, best);
             
-            // The collapse A-B-C-D -> A-E-D removes one vertex (C), 
-            // and repurposes B as E. Net reduction: 1 vertex
+            // The collapse A-B-C-D -> A-E-D removes B and C (-2), adds E (+1)
+            // Net reduction: 1 vertex
             currentVertices -= 1;
             ringVertexCounts_[best.ring_id] -= 1;
             
@@ -89,7 +88,7 @@ public:
             iterations++;
             
             // Add new collapse candidates for affected vertices
-            Node* eNode = best.b;  // B is now E
+            Node* eNode = lastInsertedE_;
             addNewCandidates(ring, best.a, eNode, best.d);
             
             // Periodic compaction of priority queue
@@ -149,7 +148,8 @@ private:
     }
     
     // Apply a collapse operation
-    // A -> B -> C -> D becomes A -> E -> D (where E replaces B's position with new coordinates)
+    // A -> B -> C -> D becomes A -> E -> D
+    // Following Project 2's approach: remove B and C, insert new vertex E after A
     void applyCollapse(Ring* ring, const CollapseCandidate& collapse) {
         Node* a = collapse.a;
         Node* b = collapse.b;
@@ -161,57 +161,43 @@ private:
         grid_.removeEdge(b, c, ring->ringId());
         grid_.removeEdge(c, d, ring->ringId());
         
-        // Update B's position to E (reuse node B as the new point E)
-        b->x = collapse.newE.x;
-        b->y = collapse.newE.y;
-        b->generation++;  // Invalidate any old references to B
+        // Remove B from the ring (this also increments generation and decrements count)
+        ring->removeNode(b);
         
-        // Remove C from the ring by relinking: B->next = D, D->prev = B
-        b->next = d;
-        d->prev = b;
+        // Remove C from the ring
+        ring->removeNode(c);
         
-        // If C was the head of the ring, update head
-        if (ring->head() == c) {
-            ring->setHead(d);
-        }
-        
-        // Mark C as invalid
-        c->generation++;
-        c->prev = nullptr;
-        c->next = nullptr;
+        // Insert new vertex E after A (increments count)
+        Node* e = ring->insertAfter(a, collapse.newE.x, collapse.newE.y);
         
         // Update spatial grid: add new edges A-E, E-D
-        grid_.insertEdge(a, b, ring->ringId());  // A-E (B is now E)
-        grid_.insertEdge(b, d, ring->ringId());  // E-D
+        grid_.insertEdge(a, e, ring->ringId());
+        grid_.insertEdge(e, d, ring->ringId());
+        
+        // Store E for generating new candidates
+        lastInsertedE_ = e;
     }
     
+    // Track the last inserted E vertex for generating new candidates
+    Node* lastInsertedE_ = nullptr;
+    
     // Add new collapse candidates after a collapse
-    // After A-B-C-D -> A-E-D, we need new candidates involving A, E(=B), D
-    void addNewCandidates(Ring* ring, Node* a, Node* e, Node* d) {
+    // After A-B-C-D -> A-E-D, we need to regenerate candidates in the affected neighborhood
+    // Following the same pattern as the reference implementation:
+    // Generate 4 candidates starting from E->prev->prev->prev
+    void addNewCandidates(Ring* ring, Node* /*a*/, Node* e, Node* /*d*/) {
         int vertCount = ringVertexCounts_[ring->ringId()];
         if (vertCount < 4) return;
         
-        // Generate candidates in a wider neighborhood
-        // Candidate 1: prev(A) - A - E - D
-        Node* prevA = a->prev;
-        if (prevA && prevA != e && prevA != d) {
-            pq_.push(CollapseCandidate(prevA, a, e, d, ring->ringId()));
-        }
-        
-        // Candidate 2: A - E - D - next(D)
-        Node* nextD = d->next;
-        if (nextD && nextD != a && nextD != e) {
-            pq_.push(CollapseCandidate(a, e, d, nextD, ring->ringId()));
-        }
-        
-        // Candidate 3: prev(prev(A)) - prev(A) - A - E
-        if (prevA && prevA->prev && prevA->prev != d && prevA->prev != e) {
-            pq_.push(CollapseCandidate(prevA->prev, prevA, a, e, ring->ringId()));
-        }
-        
-        // Candidate 4: E - D - next(D) - next(next(D))
-        if (nextD && nextD->next && nextD->next != a && nextD->next != e) {
-            pq_.push(CollapseCandidate(e, d, nextD, nextD->next, ring->ringId()));
+        // Start from E->prev->prev->prev and generate 4 consecutive candidates
+        Node* start = e->prev->prev->prev;
+        for (int i = 0; i < 4; ++i) {
+            Node* A = start;
+            Node* B = A->next;
+            Node* C = B->next;
+            Node* D = C->next;
+            pq_.push(CollapseCandidate(A, B, C, D, ring->ringId()));
+            start = start->next;
         }
     }
     
@@ -221,9 +207,74 @@ private:
                                      const Vec2& newE) const {
         // Use spatial grid to check for intersections
         // The grid already knows about all edges in the polygon
-        return grid_.collapseWouldIntersect(a, b, c, d, newE);
+        return grid_.collapseWouldIntersect(a, b, c, d, newE, b->ring_id);
     }
     
+    // Exact port of Project 2's collapse_causes_intersection + collapse_causes_cross_ring_intersection.
+    // Uses O(n) scan (no spatial grid) for correctness parity.
+    bool collapseCausesIntersection(Ring* ring, Node* A, Node* B, Node* C, Node* D, const Vec2& E) {
+        Vec2 vA(A), vD(D);
+
+        // E coincides with A or D → degenerate
+        if (point_eq(vA, E) || point_eq(vD, E)) return true;
+
+        // Check if E coincides with any vertex in the same ring (excluding ONLY A and D)
+        // Project 2 rejects collapses where E coincides with B or C too
+        {
+            Node* v = ring->head();
+            do {
+                if (v != A && v != D && point_eq(Vec2(v), E)) return true;
+                v = v->next;
+            } while (v != ring->head());
+        }
+
+        // Same-ring edge check: skip edges involving B or C
+        {
+            Node* u = ring->head();
+            do {
+                Node* w = u->next;
+                if (u == B || u == C || w == B || w == C) {
+                    u = w;
+                    continue;
+                }
+                Vec2 pu(u), pw(w);
+                if (segmentsIntersectNontrivial(vA, E, pu, pw, true)) return true;
+                if (segmentsIntersectNontrivial(E, vD, pu, pw, true)) return true;
+                u = w;
+            } while (u != ring->head());
+        }
+
+        // Cross-ring checks
+        auto rings = polygon_.allRings();
+        for (Ring* other : rings) {
+            if (other->ringId() == ring->ringId()) continue;
+            if (!other->head() || other->vertexCount() < 2) continue;
+
+            // Check if E coincides with any vertex in other ring
+            {
+                Node* v = other->head();
+                do {
+                    if (point_eq(Vec2(v), E)) return true;
+                    v = v->next;
+                } while (v != other->head());
+            }
+
+            // Check edge intersections with other ring (no shared endpoint exemption)
+            {
+                Node* u = other->head();
+                do {
+                    Node* w = u->next;
+                    Vec2 pu(u), pw(w);
+                    if (segmentsIntersectNontrivial(vA, E, pu, pw, false)) return true;
+                    if (segmentsIntersectNontrivial(E, vD, pu, pw, false)) return true;
+                    u = w;
+                } while (u != other->head());
+            }
+        }
+
+        return false;
+    }
+
     Polygon& polygon_;
     SpatialGrid grid_;
     CollapsePriorityQueue pq_;

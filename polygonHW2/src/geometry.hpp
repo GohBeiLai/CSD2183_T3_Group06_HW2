@@ -4,6 +4,7 @@
 #include <cmath>
 #include <algorithm>
 #include <limits>
+#include <vector>
 #include "node.hpp"
 
 constexpr double EPSILON = 1e-10;
@@ -149,96 +150,255 @@ inline double quadrilateralArea(const Vec2& a, const Vec2& b, const Vec2& c, con
     return triangleArea(a, b, c) + triangleArea(a, c, d);
 }
 
+// Helper: Compute segment intersection parameters
+// Returns true if segments (P1,P2) and (P3,P4) intersect, setting t and s
+inline bool segIntersectParams(const Vec2& P1, const Vec2& P2, const Vec2& P3, const Vec2& P4,
+                               double& t, double& s) {
+    double dx12 = P2.x - P1.x, dy12 = P2.y - P1.y;
+    double dx34 = P4.x - P3.x, dy34 = P4.y - P3.y;
+    double denom = dx12 * dy34 - dy12 * dx34;
+    if (std::abs(denom) < 1e-15) return false;
+    double dx13 = P3.x - P1.x, dy13 = P3.y - P1.y;
+    t = (dx13 * dy34 - dy13 * dx34) / denom;
+    s = (dx13 * dy12 - dy13 * dx12) / denom;
+    const double eps = 1e-9;
+    return (t >= -eps && t <= 1.0 + eps && s >= -eps && s <= 1.0 + eps);
+}
+
+// Helper: Compute unsigned area of a polygon given its vertices
+inline double polyArea(const std::vector<Vec2>& pts) {
+    if (pts.size() < 3) return 0.0;
+    long double acc = 0.0L;
+    for (size_t i = 0, n = pts.size(); i < n; ++i) {
+        const Vec2& a = pts[i];
+        const Vec2& b = pts[(i + 1) % n];
+        acc += static_cast<long double>(a.x) * static_cast<long double>(b.y)
+             - static_cast<long double>(b.x) * static_cast<long double>(a.y);
+    }
+    return std::abs(static_cast<double>(acc * 0.5L));
+}
+
+// Total (unsigned) area enclosed between paths A→B→C→D and A→E→D.
+//
+// Area preservation guarantees L = R (left and right displacement areas are equal).
+// The total displacement = L + R = 2L.
+//
+// We find the single intersection point I where the new path A→E→D crosses the
+// old inner edge B→C (or A→E crosses B→C), split the region there, and sum the
+// absolute areas of the two sub-regions.
+inline double arealDisplacement(const Vec2& A, const Vec2& B, const Vec2& C, const Vec2& D, const Vec2& E) {
+    double t, s;
+    const double epsCross = 1e-10;
+
+    // Check if E→D crosses B→C
+    if (segIntersectParams(E, D, B, C, t, s)) {
+        if (!(t <= epsCross || t >= 1.0 - epsCross || s <= epsCross || s >= 1.0 - epsCross)) {
+            Vec2 I(E.x + t * (D.x - E.x), E.y + t * (D.y - E.y));
+            double a1 = triangleArea(A, B, I) + triangleArea(A, I, E);
+            double a2 = triangleArea(I, C, D) + triangleArea(I, D, E);
+            return std::abs(a1) + std::abs(a2);
+        }
+    }
+
+    // Check if A→E crosses B→C
+    if (segIntersectParams(A, E, B, C, t, s)) {
+        if (!(t <= epsCross || t >= 1.0 - epsCross || s <= epsCross || s >= 1.0 - epsCross)) {
+            Vec2 I(A.x + t * (E.x - A.x), A.y + t * (E.y - A.y));
+            double a1 = std::abs(triangleArea(A, B, I));
+            double a2 = std::abs(triangleArea(I, C, D) + triangleArea(I, D, E));
+            return a1 + a2;
+        }
+    }
+
+    // Check if E→D crosses A→B
+    if (segIntersectParams(E, D, A, B, t, s)) {
+        if (!(t <= epsCross || t >= 1.0 - epsCross || s <= epsCross || s >= 1.0 - epsCross)) {
+            Vec2 I(E.x + t * (D.x - E.x), E.y + t * (D.y - E.y));
+            double a1 = std::abs(triangleArea(A, I, E));
+            double a2 = polyArea({I, B, C, D, E});
+            return a1 + a2;
+        }
+    }
+
+    // Check if A→E crosses C→D
+    if (segIntersectParams(A, E, C, D, t, s)) {
+        if (!(t <= epsCross || t >= 1.0 - epsCross || s <= epsCross || s >= 1.0 - epsCross)) {
+            Vec2 J(A.x + t * (E.x - A.x), A.y + t * (E.y - A.y));
+            double a1 = std::abs(triangleArea(J, D, E));
+            double a2 = polyArea({A, B, C, J, E});
+            return a1 + a2;
+        }
+    }
+
+    // No intersection case: use shoelace for the pentagon ABCDE
+    double area = (A.x * B.y - B.x * A.y)
+                + (B.x * C.y - C.x * B.y)
+                + (C.x * D.y - D.x * C.y)
+                + (D.x * E.y - E.x * D.y)
+                + (E.x * A.y - A.x * E.y);
+    double shoelace_disp = std::abs(area) * 0.5;
+    
+    // Alternative calculations for robustness
+    double alt1 = std::abs(triangleArea(A, B, C) + triangleArea(A, C, E))
+                + std::abs(triangleArea(C, D, E));
+    double alt2 = std::abs(triangleArea(A, B, E))
+                + std::abs(triangleArea(B, C, D) + triangleArea(B, D, E));
+    double alt3 = std::abs(triangleArea(A, B, E)) + std::abs(triangleArea(E, C, D));
+    
+    return std::max(std::max(shoelace_disp, alt1), std::max(alt2, alt3));
+}
+
+// Intersection of the line a*x + b*y + c = 0 with the infinite line through P1 and P2.
+// Returns the intersection point.
+inline Vec2 intersectEstarWithLine(double a, double b, double c, const Vec2& P1, const Vec2& P2) {
+    double dx = P2.x - P1.x;
+    double dy = P2.y - P1.y;
+    double denom = a * dx + b * dy;
+    if (std::abs(denom) < 1e-15) {
+        // Lines are parallel: project midpoint onto E*
+        Vec2 mid = (P1 + P2) * 0.5;
+        double n2 = a * a + b * b;
+        double val = a * mid.x + b * mid.y + c;
+        return Vec2(mid.x - a * val / n2, mid.y - b * val / n2);
+    }
+    double t = -(a * P1.x + b * P1.y + c) / denom;
+    return Vec2(P1.x + t * dx, P1.y + t * dy);
+}
+
 // APSC: Given vertices A, B, C, D where we collapse B and C to a new point E,
 // compute E such that the ring's signed area is preserved.
 // The collapse goes: ...A-B-C-D... -> ...A-E-D...
-// 
-// The ring's signed area changes when we replace edges A-B, B-C, C-D with A-E, E-D.
-// Using shoelace formula, each edge (p1, p2) contributes (p1.x*p2.y - p2.x*p1.y).
-// 
-// Old contribution (×2): (A.x*B.y - B.x*A.y) + (B.x*C.y - C.x*B.y) + (C.x*D.y - D.x*C.y)
-// New contribution (×2): (A.x*E.y - E.x*A.y) + (E.x*D.y - D.x*E.y)
 //
-// Simplifying new contrib: A.x*E.y - E.x*A.y + E.x*D.y - D.x*E.y
-//                        = E.x*(D.y - A.y) + E.y*(A.x - D.x)
+// Implements the APSC placement function from Kronenfeld et al. (2020), Section 3.
 //
-// For area preservation: E.x*(D.y - A.y) + E.y*(A.x - D.x) = oldContrib
-// This is a line equation for E!
+// Derivation:
+//   The area-preserving constraint (eq. 1b) defines a line E*:
+//     a*xE + b*yE + c = 0
+//   where
+//     a = yD - yA
+//     b = xA - xD
+//     c = -yB*xA + (yA-yC)*xB + (yB-yD)*xC + yC*xD
 //
-// To find E, we project the midpoint of BC onto this line perpendicular to BC,
-// or we find the point on this area-preserving line closest to B-C segment.
-inline Vec2 computeAreaPreservingPoint(const Vec2& a, const Vec2& b, 
-                                        const Vec2& c, const Vec2& d,
+//   E* is parallel to AD. Any E on E* exactly preserves the ring's signed area.
+//
+//   Among all points on E*, the one that minimises areal displacement is:
+//     - If B and C are on the SAME side of AD:
+//         take the intersection of E* with AB (if B is farther from AD),
+//         or with CD (if C is farther from AD).
+//     - If B and C are on OPPOSITE sides of AD:
+//         take the intersection of E* with AB (if B is on the same side as E*),
+//         or with CD otherwise.
+inline Vec2 computeAreaPreservingPoint(const Vec2& A, const Vec2& B, 
+                                        const Vec2& C, const Vec2& D,
                                         double& displacement) {
-    // Compute old edge contributions
-    double oldContrib = (a.x * b.y - b.x * a.y) + 
-                        (b.x * c.y - c.x * b.y) + 
-                        (c.x * d.y - d.x * c.y);
-    
-    // Coefficients of the area-preserving line: coefX * E.x + coefY * E.y = oldContrib
-    double coefX = d.y - a.y;
-    double coefY = a.x - d.x;
-    
-    // Midpoint of B and C
-    Vec2 mid = (b + c) * 0.5;
-    
-    // Direction along BC
-    Vec2 bc = c - b;
-    double bcLen = bc.length();
-    
-    // If BC has zero length, just use B
-    if (bcLen < EPSILON) {
-        // E must satisfy: coefX * E.x + coefY * E.y = oldContrib
-        // Project B onto this line
-        double norm = coefX * coefX + coefY * coefY;
-        if (norm < EPSILON) {
-            displacement = 0;
-            return b;
-        }
-        double dist = (coefX * b.x + coefY * b.y - oldContrib) / norm;
-        Vec2 e = Vec2(b.x - dist * coefX, b.y - dist * coefY);
-        displacement = std::abs(triangleArea(b, c, e));
-        return e;
+    // --- Compute E* line: a*x + b*y + c = 0 ---
+    double a = D.y - A.y;
+    double b = A.x - D.x;
+    double c = -B.y * A.x
+             + (A.y - C.y) * B.x
+             + (B.y - D.y) * C.x
+             + C.y * D.x;
+
+    // Degenerate: A == D (zero-length base)
+    double ad2 = (D.x - A.x) * (D.x - A.x) + (D.y - A.y) * (D.y - A.y);
+    if (ad2 < 1e-18) {
+        Vec2 E((B.x + C.x) * 0.5, (B.y + C.y) * 0.5);
+        displacement = arealDisplacement(A, B, C, D, E);
+        return E;
     }
-    
-    // We want E on the area-preserving line, as close as possible to segment BC
-    // The area-preserving line: coefX * x + coefY * y = oldContrib
-    // Normal to this line: (coefX, coefY)
-    
-    // Option 1: Project midpoint of BC onto the area-preserving line
-    double norm = coefX * coefX + coefY * coefY;
-    if (norm < EPSILON) {
-        // Degenerate case: any point works
-        displacement = 0;
-        return mid;
+
+    // Degenerate: E* coincides with line AD (every point on AD preserves area)
+    // Detected by checking that A lies on E*.
+    double val_A = a * A.x + b * A.y + c;
+    double scale = std::abs(a) + std::abs(b) + 1.0;
+    if (std::abs(val_A) < 1e-10 * scale) {
+        // Any point on AD is optimal; return midpoint.
+        Vec2 E((A.x + D.x) * 0.5, (A.y + D.y) * 0.5);
+        displacement = arealDisplacement(A, B, C, D, E);
+        return E;
     }
+
+    // Find E by intersecting E* with both AB and CD, pick the one with lower displacement
+    Vec2 Eab = intersectEstarWithLine(a, b, c, A, B);
+    Vec2 Ecd = intersectEstarWithLine(a, b, c, C, D);
+    double dab = arealDisplacement(A, B, C, D, Eab);
+    double dcd = arealDisplacement(A, B, C, D, Ecd);
     
-    // Distance from midpoint to the line (signed)
-    double distMid = (coefX * mid.x + coefY * mid.y - oldContrib) / std::sqrt(norm);
-    
-    // Project midpoint onto the line
-    Vec2 normal = Vec2(coefX, coefY).normalized();
-    Vec2 e = mid - normal * distMid;
-    
-    // Verify: coefX * e.x + coefY * e.y should equal oldContrib
-    // (debugging check, can be removed)
-    
-    // Calculate displacement
-    // The displacement is the area "swept" by moving from the original edges to new edges
-    // Simplified: area of triangle BCE (the region between original BC and new point E)
-    displacement = std::abs(triangleArea(b, c, e));
-    
-    // If E is exactly on line BC, displacement might be near zero
-    // In that case, use the change in triangle areas as displacement metric
-    if (displacement < EPSILON) {
-        double areaABC = triangleArea(a, b, c);
-        double areaBCD = triangleArea(b, c, d);
-        double areaAED = triangleArea(a, e, d);
-        // The actual shape difference
-        displacement = std::abs(areaABC + areaBCD - areaAED);
+    if (dab <= dcd) {
+        displacement = dab;
+        return Eab;
+    } else {
+        displacement = dcd;
+        return Ecd;
     }
-    
-    return e;
+}
+
+// --- Robust intersection helpers (matching Project 2's geometry.cpp) ---
+
+inline bool point_eq(const Vec2& a, const Vec2& b) {
+    const double eps = 1e-12;
+    return std::abs(a.x - b.x) <= eps && std::abs(a.y - b.y) <= eps;
+}
+
+inline int orient_sign(const Vec2& a, const Vec2& b, const Vec2& c) {
+    long double abx = static_cast<long double>(b.x) - static_cast<long double>(a.x);
+    long double aby = static_cast<long double>(b.y) - static_cast<long double>(a.y);
+    long double acx = static_cast<long double>(c.x) - static_cast<long double>(a.x);
+    long double acy = static_cast<long double>(c.y) - static_cast<long double>(a.y);
+    long double v   = abx * acy - aby * acx;
+    long double tol = 1e-12L * (fabsl(abx) + fabsl(aby) + fabsl(acx) + fabsl(acy) + 1.0L);
+    if (fabsl(v) <= tol) return 0;
+    return (v > 0) ? 1 : -1;
+}
+
+inline bool on_segment_robust(const Vec2& a, const Vec2& b, const Vec2& p) {
+    const double eps = 1e-12;
+    if (orient_sign(a, b, p) != 0) return false;
+    return (p.x >= std::min(a.x, b.x) - eps && p.x <= std::max(a.x, b.x) + eps &&
+            p.y >= std::min(a.y, b.y) - eps && p.y <= std::max(a.y, b.y) + eps);
+}
+
+inline bool collinear_overlap_nontrivial(const Vec2& a, const Vec2& b, const Vec2& c, const Vec2& d) {
+    if (orient_sign(a, b, c) != 0 || orient_sign(a, b, d) != 0) return false;
+    const double eps = 1e-12;
+    const double abx = std::abs(b.x - a.x);
+    const double aby = std::abs(b.y - a.y);
+    auto proj = [&](const Vec2& p) -> double { return (abx >= aby) ? p.x : p.y; };
+    double a0 = proj(a), a1 = proj(b);
+    double c0 = proj(c), c1 = proj(d);
+    if (a0 > a1) std::swap(a0, a1);
+    if (c0 > c1) std::swap(c0, c1);
+    double overlap = std::min(a1, c1) - std::max(a0, c0);
+    return overlap > eps;
+}
+
+// Matches Project 2's segments_intersect_nontrivial:
+// Returns true if segments (p1,p2) and (p3,p4) intersect in a non-trivial way.
+// When ignore_shared_endpoints is true, a touch at a shared endpoint is not counted.
+inline bool segmentsIntersectNontrivial(const Vec2& p1, const Vec2& p2,
+                                         const Vec2& p3, const Vec2& p4,
+                                         bool ignore_shared_endpoints) {
+    const bool shared_endpoint =
+        point_eq(p1, p3) || point_eq(p1, p4) || point_eq(p2, p3) || point_eq(p2, p4);
+
+    if (collinear_overlap_nontrivial(p1, p2, p3, p4)) return true;
+
+    int o1 = orient_sign(p1, p2, p3);
+    int o2 = orient_sign(p1, p2, p4);
+    int o3 = orient_sign(p3, p4, p1);
+    int o4 = orient_sign(p3, p4, p2);
+
+    if (o1 * o2 < 0 && o3 * o4 < 0) return true;
+
+    bool intersects =
+        (o1 == 0 && on_segment_robust(p1, p2, p3)) ||
+        (o2 == 0 && on_segment_robust(p1, p2, p4)) ||
+        (o3 == 0 && on_segment_robust(p3, p4, p1)) ||
+        (o4 == 0 && on_segment_robust(p3, p4, p2));
+
+    if (!intersects) return false;
+    if (ignore_shared_endpoints && shared_endpoint) return false;
+    return true;
 }
 
 // Bounding box helper

@@ -27,10 +27,23 @@ Each test case consists of an **input CSV** and the corresponding **expected out
 | `input_original_09.csv` | 99 | `output_original_09.txt` |
 | `input_original_10.csv` | 99 | `output_original_10.txt` |
 
+## Custom test cases (experimental evaluation)
+
+These datasets were created to test specific challenging properties beyond the reference cases.
+
+| Input file | Vertices | Holes | Target | Property Tested |
+|---|---|---|---|---|
+| `test_many_holes_25.csv` | 400 | 25 | 100 | Large number of holes: stresses spatial index with many inter-ring intersection checks |
+| `test_narrow_gap.csv` | 350 | 1 | 50 | Tight gap between exterior (r=100) and hole (r=90): collapse candidates risk inter-ring intersection |
+| `test_star_50points.csv` | 100 | 0 | 20 | Highly non-convex star shape: extreme angular changes at every vertex |
+| `test_wavy_highfreq.csv` | 2,500 | 1 | 200 | High-frequency sinusoidal boundary: dense small-scale detail to eliminate |
+| `test_concentric_3holes.csv` | 750 | 3 | 100 | Large hole close to exterior (narrow annular gap) with 2 additional holes |
+| `test_scaling_holes_50.csv` | 1,500 | 50 | 200 | 50 small holes: tests priority queue and spatial index scaling with many rings |
+
 ## Usage
 
 ```
-./area_and_topology_preserving_polygon_simplification <input_file> <target_vertices>
+./simplify <input_file> <target_vertices>
 ```
 
 The program reads a CSV with columns `ring_id,vertex_id,x,y` and writes simplified output to stdout.

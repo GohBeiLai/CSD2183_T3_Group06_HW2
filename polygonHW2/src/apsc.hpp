@@ -13,100 +13,101 @@
 class APSC {
 public:
     APSC(Polygon& polygon) : polygon_(polygon), totalDisplacement_(0.0) {}
-    
+
     // Run the simplification algorithm
     // Returns the actual number of vertices after simplification
     int simplify(int targetVertices) {
         int currentVertices = polygon_.totalVertexCount();
-        
+
         if (currentVertices <= targetVertices) {
             std::cerr << "Already at or below target vertex count" << std::endl;
             return currentVertices;
         }
-        
+
         // Build spatial index
         auto rings = polygon_.allRings();
         grid_.build(rings);
-        
+
         // Initialize ring vertex counts
         for (Ring* ring : rings) {
             ringVertexCounts_[ring->ringId()] = countVertices(ring->head());
         }
-        
+
         // Initialize priority queue with all possible collapses
         initializeCollapses();
-        
-        std::cerr << "Starting APSC with " << currentVertices << " vertices, target: " 
-                  << targetVertices << std::endl;
+
+        std::cerr << "Starting APSC with " << currentVertices << " vertices, target: "
+            << targetVertices << std::endl;
         std::cerr << "Initial collapse candidates: " << pq_.size() << std::endl;
-        
+
         int iterations = 0;
         while (currentVertices > targetVertices) {
             CollapseCandidate best;
-            
+
             // Find valid collapse with minimum displacement
             if (!pq_.pop(best)) {
                 std::cerr << "No more valid collapses available" << std::endl;
                 break;
             }
-            
+
             // Verify the collapse is still valid after popping
             if (!best.isValid()) {
                 continue;  // Skip stale entry
             }
-            
+
             // Find the ring for this collapse
             Ring* ring = findRing(best.ring_id);
             if (!ring) {
                 std::cerr << "Ring not found: " << best.ring_id << std::endl;
                 continue;
             }
-            
+
             // Check ring vertex count from our cached map
             int ringVertices = ringVertexCounts_[best.ring_id];
-            
+
             // Check minimum vertex constraint (ring must have at least 3 vertices after collapse)
             // We remove 1 vertex per collapse, so need at least 4 to end up with 3
             if (ringVertices <= 3) {
                 continue;
             }
-            
-            // Topology check: O(n) scan matching Project 2's exact logic
-            if (collapseCausesIntersection(ring, best.a, best.b, best.c, best.d, best.newE)) {
+
+            // Topology check: verify collapse won't cause intersections
+            // Uses spatial grid for O(1) average intersection queries
+            if (grid_.collapseWouldIntersect(best.a, best.b, best.c, best.d, best.newE, best.ring_id)) {
                 continue;
             }
-            
+
             // Apply the collapse
             applyCollapse(ring, best);
-            
+
             // The collapse A-B-C-D -> A-E-D removes B and C (-2), adds E (+1)
             // Net reduction: 1 vertex
             currentVertices -= 1;
             ringVertexCounts_[best.ring_id] -= 1;
-            
+
             totalDisplacement_ += best.displacement;
             iterations++;
-            
+
             // Add new collapse candidates for affected vertices
             Node* eNode = lastInsertedE_;
             addNewCandidates(ring, best.a, eNode, best.d);
-            
+
             // Periodic compaction of priority queue
             if (iterations % 100 == 0) {
                 pq_.compact();
                 std::cerr << "Iteration " << iterations << ", vertices: " << currentVertices << std::endl;
             }
         }
-        
+
         // Clean up any invalid interior rings
         polygon_.removeInvalidInteriors();
-        
+
         std::cerr << "Finished after " << iterations << " iterations" << std::endl;
         std::cerr << "Final vertex count: " << polygon_.totalVertexCount() << std::endl;
-        
+
         return polygon_.totalVertexCount();
     }
-    
+
     // Get total areal displacement
     double totalDisplacement() const { return totalDisplacement_; }
 
@@ -123,30 +124,30 @@ private:
         }
         return nullptr;
     }
-    
+
     // Initialize priority queue with all possible collapses
     void initializeCollapses() {
         for (Ring* ring : polygon_.allRings()) {
             int vertCount = ringVertexCounts_[ring->ringId()];
             if (vertCount < 4) continue;  // Need at least 4 vertices to have a valid collapse
-            
+
             ring->forEachVertex([this, ring, vertCount](Node* node) {
                 // Create collapse candidate for A=node, B=next, C=next->next, D=next->next->next
                 Node* a = node;
                 Node* b = a->next;
                 Node* c = b->next;
                 Node* d = c->next;
-                
+
                 // For rings, the list wraps around, check we don't have duplicate nodes
                 if (d == a || c == a || b == a) return;
                 if (vertCount < 4) return;
-                
+
                 CollapseCandidate candidate(a, b, c, d, ring->ringId());
                 pq_.push(candidate);
-            });
+                });
         }
     }
-    
+
     // Apply a collapse operation
     // A -> B -> C -> D becomes A -> E -> D
     // Following Project 2's approach: remove B and C, insert new vertex E after A
@@ -155,32 +156,32 @@ private:
         Node* b = collapse.b;
         Node* c = collapse.c;
         Node* d = collapse.d;
-        
+
         // Update spatial grid: remove old edges A-B, B-C, C-D
         grid_.removeEdge(a, b, ring->ringId());
         grid_.removeEdge(b, c, ring->ringId());
         grid_.removeEdge(c, d, ring->ringId());
-        
+
         // Remove B from the ring (this also increments generation and decrements count)
         ring->removeNode(b);
-        
+
         // Remove C from the ring
         ring->removeNode(c);
-        
+
         // Insert new vertex E after A (increments count)
         Node* e = ring->insertAfter(a, collapse.newE.x, collapse.newE.y);
-        
+
         // Update spatial grid: add new edges A-E, E-D
         grid_.insertEdge(a, e, ring->ringId());
         grid_.insertEdge(e, d, ring->ringId());
-        
+
         // Store E for generating new candidates
         lastInsertedE_ = e;
     }
-    
+
     // Track the last inserted E vertex for generating new candidates
     Node* lastInsertedE_ = nullptr;
-    
+
     // Add new collapse candidates after a collapse
     // After A-B-C-D -> A-E-D, we need to regenerate candidates in the affected neighborhood
     // Following the same pattern as the reference implementation:
@@ -188,7 +189,7 @@ private:
     void addNewCandidates(Ring* ring, Node* /*a*/, Node* e, Node* /*d*/) {
         int vertCount = ringVertexCounts_[ring->ringId()];
         if (vertCount < 4) return;
-        
+
         // Start from E->prev->prev->prev and generate 4 consecutive candidates
         Node* start = e->prev->prev->prev;
         for (int i = 0; i < 4; ++i) {
@@ -200,16 +201,16 @@ private:
             start = start->next;
         }
     }
-    
+
     // Check if collapse would cause self-intersection within the ring
     // Uses spatial grid for efficient intersection queries
-    bool collapseWouldSelfIntersect(Ring* /*ring*/, Node* a, Node* b, Node* c, Node* d, 
-                                     const Vec2& newE) const {
+    bool collapseWouldSelfIntersect(Ring* /*ring*/, Node* a, Node* b, Node* c, Node* d,
+        const Vec2& newE) const {
         // Use spatial grid to check for intersections
         // The grid already knows about all edges in the polygon
         return grid_.collapseWouldIntersect(a, b, c, d, newE, b->ring_id);
     }
-    
+
     // Exact port of Project 2's collapse_causes_intersection + collapse_causes_cross_ring_intersection.
     // Uses O(n) scan (no spatial grid) for correctness parity.
     bool collapseCausesIntersection(Ring* ring, Node* A, Node* B, Node* C, Node* D, const Vec2& E) {

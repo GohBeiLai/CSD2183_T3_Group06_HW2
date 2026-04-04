@@ -1,31 +1,49 @@
-# Polygon Simplification (APSC)
+# Test Cases for Area-and-Topology-Preserving Polygon Simplification
 
-A high-performance C++17 implementation of the **Area-Preserving Segment Collapse (APSC)** algorithm.
+Each test case consists of an **input CSV** and the corresponding **expected output**.
 
-## Features
-- **Exact Area Preservation:** Guaranteed signed area match.
-- **Topology Safety:** No self-intersections or ring-count changes.
-- **High Efficiency:** Processes 400K+ vertices in < 60s.
-- **Linux/WSL Optimized:** Clean `Makefile` workflow.
+## Simple cases (polygons with holes)
 
-## Quick Start (WSL)
-```bash
-# 1. Enter the project directory
-cd polygonHW2
+| Input file | Vertices | Holes | Target | Output file |
+|---|---|---|---|---|
+| `input_rectangle_with_two_holes.csv` | 12 | 2 | 7 | `output_rectangle_with_two_holes.txt` |
+| `input_cushion_with_hexagonal_hole.csv` | 22 | 1 | 13 | `output_cushion_with_hexagonal_hole.txt` |
+| `input_blob_with_two_holes.csv` | 36 | 2 | 17 | `output_blob_with_two_holes.txt` |
+| `input_wavy_with_three_holes.csv` | 43 | 3 | 21 | `output_wavy_with_three_holes.txt` |
+| `input_lake_with_two_islands.csv` | 81 | 2 | 17 | `output_lake_with_two_islands.txt` |
 
-# 2. Build the project
-make
+## Lake cases (single polygon, no holes)
 
-# 3. Run all tests
-make test-all
+| Input file | Target | Output file |
+|---|---|---|
+| `input_original_01.csv` | 99 | `output_original_01.txt` |
+| `input_original_02.csv` | 99 | `output_original_02.txt` |
+| `input_original_03.csv` | 99 | `output_original_03.txt` |
+| `input_original_04.csv` | 99 | `output_original_04.txt` |
+| `input_original_05.csv` | 99 | `output_original_05.txt` |
+| `input_original_06.csv` | 99 | `output_original_06.txt` |
+| `input_original_07.csv` | 99 | `output_original_07.txt` |
+| `input_original_08.csv` | 99 | `output_original_08.txt` |
+| `input_original_09.csv` | 99 | `output_original_09.txt` |
+| `input_original_10.csv` | 99 | `output_original_10.txt` |
+
+## Custom test cases (experimental evaluation)
+
+These datasets were created to test specific challenging properties beyond the reference cases.
+
+| Input file | Vertices | Holes | Target | Output file | Property Tested |
+|---|---|---|---|---|---|
+| `test_concentric_3holes.csv` | 750 | 3 | 100 | `output_test_concentric_3holes.txt` | Large hole close to exterior (narrow annular gap) with 2 additional holes |
+| `test_many_holes_25.csv` | 400 | 25 | 100 | `output_test_many_holes_25.txt` | Large number of holes: stresses spatial index with many inter-ring intersection checks |
+| `test_narrow_gap.csv` | 350 | 1 | 50 | `output_test_narrow_gap.txt` | Tight gap between exterior (r=100) and hole (r=90): collapse candidates risk inter-ring intersection |
+| `test_scaling_holes_50.csv` | 1,500 | 50 | 200 | `output_test_scaling_holes_50.txt` | 50 small holes: tests priority queue and spatial index scaling with many rings |
+| `test_star_50points.csv` | 100 | 0 | 20 | `output_test_star_50points.txt` | Highly non-convex star shape: extreme angular changes at every vertex |
+| `test_wavy_highfreq.csv` | 2,500 | 1 | 200 | `output_test_wavy_highfreq.txt` | High-frequency sinusoidal boundary: dense small-scale detail to eliminate |
+
+## Usage
+
+```
+./simplify <input_file> <target_vertices>
 ```
 
-## Project Structure
-- `src/`: C++ header-only implementation.
-- `test_cases/`: Official instructor datasets.
-- `test_results/`: Logs and simplified outputs.
-
-## Requirements
-- `g++` (C++17 support)
-- `make`
-- WSL or Linux environment
+The program reads a CSV with columns `ring_id,vertex_id,x,y` and writes simplified output to stdout.

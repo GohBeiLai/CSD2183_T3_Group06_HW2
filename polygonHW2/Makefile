@@ -35,7 +35,7 @@ test-case: $(TARGET)
 	@mkdir -p ../test_results
 	@echo "----------------------------------------------------------"
 	@echo "Testing $(IN) (Target: $(TARGET_VERTICES))"
-	@./$(TARGET) ../test_cases/$(IN) $(TARGET_VERTICES) > ../test_results/actual_$(EXPECT) 2> ../test_results/log_$(IN).txt
+	@./$(TARGET) ../test_cases/$(IN) $(TARGET_VERTICES) > ../test_results/actual_$(EXPECT) 2>/dev/null
 	@echo "--- Comparison Summary ---"
 	@printf "%-30s | %-20s | %-20s\n" "Metric" "Sample (Expected)" "Actual (Yours)"
 	@printf "%-30s | %-20s | %-20s\n" "------------------------------" "--------------------" "--------------------"
@@ -51,9 +51,11 @@ test-case: $(TARGET)
 	@V_COUNT=$$(grep -c "^[0-9]" ../test_results/actual_$(EXPECT)); \
 	 printf "%-30s | %-20s | %-20s\n" "Final Vertex Count" "$(TARGET_VERTICES)" "$$V_COUNT"
 
-# Run all 15 test cases
+# Run all test cases (15 official + 6 custom = 21 total)
 test-all: $(TARGET)
 	@echo "=== RUNNING ALL TEST CASES ==="
+	@echo ""
+	@echo "=== Official Test Cases (15) ==="
 	@$(MAKE) -s test-case IN=input_rectangle_with_two_holes.csv TARGET_VERTICES=11 EXPECT=output_rectangle_with_two_holes.txt
 	@$(MAKE) -s test-case IN=input_cushion_with_hexagonal_hole.csv TARGET_VERTICES=13 EXPECT=output_cushion_with_hexagonal_hole.txt
 	@$(MAKE) -s test-case IN=input_blob_with_two_holes.csv TARGET_VERTICES=17 EXPECT=output_blob_with_two_holes.txt
@@ -62,5 +64,13 @@ test-all: $(TARGET)
 	@for i in 01 02 03 04 05 06 07 08 09 10; do \
 		$(MAKE) -s test-case IN=input_original_$$i.csv TARGET_VERTICES=99 EXPECT=output_original_$$i.txt; \
 	done
+	@echo ""
+	@echo "=== Custom Test Cases (6) ==="
+	@$(MAKE) -s test-case IN=test_concentric_3holes.csv TARGET_VERTICES=100 EXPECT=output_test_concentric_3holes.txt
+	@$(MAKE) -s test-case IN=test_many_holes_25.csv TARGET_VERTICES=100 EXPECT=output_test_many_holes_25.txt
+	@$(MAKE) -s test-case IN=test_narrow_gap.csv TARGET_VERTICES=50 EXPECT=output_test_narrow_gap.txt
+	@$(MAKE) -s test-case IN=test_scaling_holes_50.csv TARGET_VERTICES=200 EXPECT=output_test_scaling_holes_50.txt
+	@$(MAKE) -s test-case IN=test_star_50points.csv TARGET_VERTICES=20 EXPECT=output_test_star_50points.txt
+	@$(MAKE) -s test-case IN=test_wavy_highfreq.csv TARGET_VERTICES=200 EXPECT=output_test_wavy_highfreq.txt
 	@echo "----------------------------------------------------------"
-	@echo "Tests complete. Results stored in 'test_results/'"
+	@echo "All 21 tests complete. Results stored in 'test_results/'"
